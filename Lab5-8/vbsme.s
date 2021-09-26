@@ -781,12 +781,114 @@ vbsme:
     li      $v1, 0
 
     # insert your code here
-    lw $s0, 0(a0)   # s0 = rowFrame
-    lw $s1, 4(a0)   # s1 = colFrame
-    lw $s2, 8(a0)   # s2 = rowWindow
-    lw $s3, 12(a0)  # s3 = colWindow
+
+    # a0 = &asize, a1 = &frame, a2 = &window, a3 = index
+    # s0 = rowFrame, s1 = colFrame, s2 = rowWindow, s3 = colWindow
+    # s4 = trajectory, s5 = pass, s6 = i, s7 = minIndex
+    # v0 = SAD
+    lw $s0, 0($a0)   # s0 = rowFrame
+    lw $s1, 4($a0)   # s1 = colFrame
+    lw $s2, 8($a0)   # s2 = rowWindow
+    lw $s3, 12($a0)  # s3 = colWindow
+    li $s7, 0       # minIndex = 0
+
+    li $s5, 0       # i = 0
+    vbsme_forloop:
+        mul $t0, $s2, $s3   # t0 = rowWindow * colWindow
+        slt $t0, $s6, $t0   # t0 = 1 if i < rowWindow * colWindow
+        beq $t0, $zero, vbsme_forloop_exit  # leave loop if i > rowWindow * colWindow
+        jal increment
+        addi $sp, $sp, -4   # adjust stack for one item
+        sw $a3, 0($sp)      # save the current index on the stack
+        add $a3, $zero, $s7 # a3 = minIndex
+        jal SAD
+        addi $t8, $v0, 0    # t8 = sum from SAD
+        lw $a3, 0($sp)      # restore current index to a3
+        addi $sp, $sp, 4    # restore stack
+        jal SAD
+        addi $t9, $v0, 0    # t9 = sum from SAD
+        sgt $t8, $t8, $t9   # t8 = 1 if t8 > t9
+        beq $t8, $zero, vbsme_if_exit
+        vbsme_if:
+            add $s7, $a3, $zero # minIndex = index
+        vbsme_if_exit:
+        addi $s6, $s6, 1    # i++
+        j vbsme_forloop
+    vbsme_forloop_exit:
+    jr $ra
+
+
+
+
+
+
+.text
+.globl increment
+
+increment:
+    # s2 = rowWindow, s3 = colWindow, a3 = index
+    # s4 = trajectory s5 = pass
     
-    
+    slt $t0, $s3, $s3   # index < colWindow
+    beq $zero, $t0, INCR_1
+    bne $s5, $zero, INCR_1 # && pass == 0
+
+    addi $a3, $a3, 1    # index++
+    addi $s5, $zero, 1  # pass = 1
+    addi $s4, $zero, 0  # trajectory = 0
+    j INCR_END
+
+    INCR_1:
+        addi $t0, $s2, -1   # row - 1
+        mul $t1, $s3, $t0       # col * (row -1)
+        addi $t1, $t1, -1   # (col * (row - 1) - 1)
+        slt $t2, $t1, $a3   # (col * (row - 1) - 1) < index
+        beq $zero, $t2, INCR_2
+        bne $s5, $zero, INCR_2
+
+        addi $a3, $a3, 1    # index++
+        addi $s5, $zero, 1  # pass = 1
+        addi $s4, $zero, 1  # trajectory = 1
+        j INCR_END
+
+    INCR_2:
+        div $a3, $s3
+        mfhi $t0            # index % col
+        bne $t0, $zero, INCR_3
+        bne $s5, $zero, INCR_3
+
+        add $a3, $a3, $s3   # index = index + col
+        addi $s5, $zero, 1  # pass = 1
+        addi $s4, $zero, 1  # trajectory = 1
+        j INCR_END
+
+    INCR_3:
+        addi $t1, $a3, 1    # index + 1
+        div $t1, $s3
+        mfhi $t0            # index + 1 % col
+        bne $t0, $zero, INCR_ELSE
+        bne $s5, $zero, INCR_ELSE
+
+        add $a3, $a3, $s3   # index = index + col
+        addi $s5, $zero, 1  # pass = 1
+        addi $s4, $zero, 0  # trajectory = 0
+        j INCR_END
+
+    INCR_ELSE:
+        bne $s4, $zero, INCR_ELSE_2
+        add $a3, $a3, $s3   # index = index + col
+        addi $a3, $a3, -1   # index + col - 1
+
+    INCR_ELSE_2:
+        beq $s4, $zero, INCR_ELSE_3
+        sub $a3, $a3, $s3   # index = index - col
+        addi $a3, $a3, 1    # index - col + 1
+
+    INCR_ELSE_3:
+        addi $s5, $zero, 0 # pass = 0
+
+    INCR_END:
+    jr $ra   
     
     
     
@@ -814,37 +916,37 @@ SAD:
     slt $t3, $t3, $t4   # t3 = 1 if ((rowWindow * colWindow) - (rowWindow * colFrame)) < (colFrame + index)
     and $t2, $t2, $t3   # t2 = 1 if t2 and t3 = 1
     beq $t2, $zero, SAD_acceptable # continue through SAD if conditions not met
-    addi $v0, $zero, 2000000000 # return large value if unable to do SAD
-    j $ra               # exit SAD function
+    addi $v0, $zero, 1000 # return large value if unable to do SAD
+    jr $ra               # exit SAD function
 
-SAD_acceptable: # t2 = i, t3 = k, t5 = frame[count], t6 = window[k + index + rowWindow * i]
-    add $t2, $zero, $zero   # i = 0
-    SAD_firstloop:
-        slt $t4, $t2, $s1       # $t4 = 1 if i < colFrame
-        beq $t4, $zero, SAD_firstloop_exit # leave loop if i >= colFrame
-        add $t3, $zero, $zero   # k = 0
-        SAD_secondloop:
-            slt $t4, $t3, $s0   # $t4 = 1 if k < rowFrame
-            beq $t4, $zero, SAD_secondloop_exit # leave loop if k >= rowFrame
-            sll $t5, $t1, 2     # t5 = count * 4
-            add $t5, $t5, $a1   # t5 = &frame[count]
-            lw $t5, 0($t5)      # t5 = frame[count]
-            add $t6, $t3, $a3   # t6 = k + index
-            mul $t7, $s2, $t2   # t7 = rowWindow * i
-            add $t6, $t6, $t7   # t6 = k + index + rowWindow * i
-            sll $t6, $t6, 2     # t6 = 4 * (k + index + rowWindow * i)
-            add $t6, $t6, $a2   # t6 = &window[k + index + rowWindow * i]
-            lw $t6, 0($t6)      # t6 = window[k + index + rowWindow * i]
-            sub $t5, $t5, $t6   # t5 = frame[count] - window[k + index + rowWindow * i]
-            abs $t5, $t5        # t5 = |frame[count] - window[k + index + rowWindow * i]|
-            add $t0, $t0, $t5   # sum = sum + |frame[count] - window[k + index + rowWindow * i]|
-            
-            addi $t1, $t1, 1    # count++
-            addi $t4, $t4, 1    # k++
-            j SAD_secondloop    # loop
-        SAD_secondloop_exit:
-        addi $t2, $t2, 1    # i++
-        j SAD_firstloop     # loop
-    SAD_firstloop_exit:
-    addi $v0, $v0, $t0  # return sum
-    j $ra               # exit SAD function
+    SAD_acceptable: # t2 = i, t3 = k, t5 = frame[count], t6 = window[k + index + rowWindow * i]
+        add $t2, $zero, $zero   # i = 0
+        SAD_firstloop:
+            slt $t4, $t2, $s1       # $t4 = 1 if i < colFrame
+            beq $t4, $zero, SAD_firstloop_exit # leave loop if i >= colFrame
+            add $t3, $zero, $zero   # k = 0
+            SAD_secondloop:
+                slt $t4, $t3, $s0   # $t4 = 1 if k < rowFrame
+                beq $t4, $zero, SAD_secondloop_exit # leave loop if k >= rowFrame
+                sll $t5, $t1, 2     # t5 = count * 4
+                add $t5, $t5, $a1   # t5 = &frame[count]
+                lw $t5, 0($t5)      # t5 = frame[count]
+                add $t6, $t3, $a3   # t6 = k + index
+                mul $t7, $s2, $t2   # t7 = rowWindow * i
+                add $t6, $t6, $t7   # t6 = k + index + rowWindow * i
+                sll $t6, $t6, 2     # t6 = 4 * (k + index + rowWindow * i)
+                add $t6, $t6, $a2   # t6 = &window[k + index + rowWindow * i]
+                lw $t6, 0($t6)      # t6 = window[k + index + rowWindow * i]
+                sub $t5, $t5, $t6   # t5 = frame[count] - window[k + index + rowWindow * i]
+                abs $t5, $t5        # t5 = |frame[count] - window[k + index + rowWindow * i]|
+                add $t0, $t0, $t5   # sum = sum + |frame[count] - window[k + index + rowWindow * i]|
+                
+                addi $t1, $t1, 1    # count++
+                addi $t4, $t4, 1    # k++
+                j SAD_secondloop    # loop
+            SAD_secondloop_exit:
+            addi $t2, $t2, 1    # i++
+            j SAD_firstloop     # loop
+        SAD_firstloop_exit:
+    add $v0, $v0, $t0  # return sum
+    jr $ra               # exit SAD function
