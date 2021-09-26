@@ -776,6 +776,7 @@ print_result:
 #          (v1) y coordinate of the block in the frame with the minimum SAD
 
 
+
 # Begin subroutine
 vbsme:  
     li      $v0, 0              # reset $v0 and $V1
@@ -783,3 +784,78 @@ vbsme:
 
     # insert your code here
    
+
+
+.globl increment
+increment:
+# a0 = row, a1 = col, a3 = index
+# s4 = trajectory s5 = pass
+    
+slt $t0, $a2, $a1 # index < col
+beq $zero, $t0, INCR_1
+bne $s5, $zero, INCR_1 # && pass == 0
+
+addi $a3, $a3, 1 # index++
+addi $s5, $zero, 1 # pass = 1
+addi $s4, $zero, 0 # trajectory = 0
+j INCR_END
+
+INCR_1:
+
+addi $t0, $a0, -1 # row - 1
+mult $a1, $t0 # col * (row -1)
+mflo $t1
+addi $t1, $t1, -1 # (col * (row - 1) - 1)
+slt $t2, $t1, $a3 # (col * (row - 1) - 1) < index
+beq $zero, $t2, INCR_2
+bne $s5, $zero, INCR_2
+
+addi $a3, $a3, 1 # index++
+addi $s5, $zero, 1 # pass = 1
+addi $s4, $zero, 1 # trajectory = 1
+j INCR_END
+
+INCR_2:
+
+div $a3, $a1
+mfhi $t0 # index % col
+bne $t0, $zero, INCR_3
+bne $s5, $zero, INCR_3
+
+add $a3, $a3, $a1 # index = index + col
+addi $s5, $zero, 1 # pass = 1
+addi $s4, $zero, 1 # trajectory = 1
+j INCR_END
+
+INCR_3:
+
+addi $t1, $a3, 1 # index + 1
+div $t1, $a1
+mfhi $t0 # index + 1 % col
+bne $t0, $zero, INCR_ELSE
+bne $s5, $zero, INCR_ELSE
+
+add $a3, $a3, $a1 # index = index + col
+addi $s5, $zero, 1 # pass = 1
+addi $s4, $zero, 0 # trajectory = 0
+j INCR_END
+
+INCR_ELSE:
+
+bne $s4, $zero, INCR_ELSE_2
+add $a3, $a3, $a1 # index = index + col
+addi $a3, $a3, -1 # index + col - 1
+
+INCR_ELSE_2:
+
+beq $s4, $zero, INCR_ELSE_3
+sub $a3, $a3, $a1 # index = index - col
+addi $a3, $a3, 1 # index - col + 1
+
+INCR_ELSE_3:
+
+addi $s5, $zero, 0 # pass = 0
+
+INCR_END:
+
+    
